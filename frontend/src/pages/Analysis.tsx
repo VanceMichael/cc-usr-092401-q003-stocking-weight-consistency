@@ -178,16 +178,22 @@ const Analysis: React.FC = () => {
                       <thead>
                         <tr>
                           <th>投苗日期</th>
-                          <th>数量</th>
+                          <th>数量(尾)</th>
+                          <th>每尾克重(克/尾)</th>
+                          <th>总重量(公斤)</th>
                           <th>来源</th>
+                          <th>状态</th>
                         </tr>
                       </thead>
                       <tbody>
                         {searchResult.stocking_records.map((record, idx) => (
-                          <tr key={idx}>
+                          <tr key={idx} className={record.status === 'voided' ? 'text-gray-400 line-through' : ''}>
                             <td>{record.stocking_date}</td>
                             <td>{record.quantity} 尾</td>
+                            <td>{record.weight_per_unit ?? '—'}</td>
+                            <td>{record.total_weight_kg ?? '—'}</td>
                             <td>{record.source || '-'}</td>
+                            <td>{record.status === 'voided' ? '已撤销' : `有效 v${record.version ?? 1}`}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -393,9 +399,19 @@ const Analysis: React.FC = () => {
           ) : analysisData && selectedBatchId ? (
             <>
               <div className="card">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 mb-1">
                   养殖周期分析 - {getBatchNumber(selectedBatchId)}
                 </h2>
+                <p className="text-xs text-gray-400 mb-4">
+                  投苗 {analysisData.initial_quantity.toLocaleString()} 尾
+                  {analysisData.initial_weight_kg !== null && analysisData.initial_weight_kg !== undefined
+                    ? ` · ${analysisData.initial_weight_kg} 公斤（仅计有效记录）`
+                    : ''}
+                  {analysisData.harvest_weight_per_unit_g
+                    ? ` · 出塘均重 ${analysisData.harvest_weight_per_unit_g} 克/尾`
+                    : ''}
+                  {' · '}计量口径版本 {analysisData.metrics_version || '—'}
+                </p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 bg-green-50 rounded-lg">
                     <div className="flex items-center space-x-3">
@@ -403,7 +419,17 @@ const Analysis: React.FC = () => {
                       <div>
                         <p className="text-sm text-green-600">成活率</p>
                         <p className="text-2xl font-bold text-green-700">
-                          {analysisData.survival_rate ? `${analysisData.survival_rate.toFixed(1)}%` : '-'}
+                          {analysisData.survival_rate !== null && analysisData.survival_rate !== undefined
+                            ? `${analysisData.survival_rate.toFixed(2)}%`
+                            : '—'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {analysisData.survival_rate_note
+                            ? analysisData.survival_rate_note
+                            : analysisData.estimated_survival_count !== null &&
+                              analysisData.estimated_survival_count !== undefined
+                              ? `估算存活 ${analysisData.estimated_survival_count.toLocaleString()} 尾（按出塘均重反推）`
+                              : ''}
                         </p>
                       </div>
                     </div>

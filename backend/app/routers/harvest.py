@@ -4,21 +4,33 @@ from typing import List
 from ..database import get_db
 from ..models import HarvestSale, Batch
 from ..schemas import HarvestSaleCreate, HarvestSaleUpdate, HarvestSaleResponse
+from ..services.metrics import MetricsError, validate_harvest_weight_per_unit
 
 router = APIRouter(
     prefix="/api/harvest-sales",
     tags=["出塘销售"]
 )
 
+
+def _validate_optional_wpu(weight_per_unit):
+    if weight_per_unit is None:
+        return None
+    try:
+        return float(validate_harvest_weight_per_unit(weight_per_unit))
+    except MetricsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @router.post("/", response_model=HarvestSaleResponse)
 def create_harvest_sale(sale: HarvestSaleCreate, db: Session = Depends(get_db)):
     db_batch = db.query(Batch).filter(Batch.id == sale.batch_id).first()
     if not db_batch:
         raise HTTPException(status_code=404, detail="批次不存在")
-    
+
     if sale.total_amount is None:
         sale.total_amount = sale.weight * sale.unit_price
-    
+    sale.weight_per_unit = _validate_optional_wpu(sale.weight_per_unit)
+
     new_sale = HarvestSale(**sale.dict())
     db.add(new_sale)
     db.commit()
@@ -47,7 +59,12 @@ def update_harvest_sale(sale_id: int, sale: HarvestSaleUpdate, db: Session = Dep
         raise HTTPException(status_code=404, detail="出塘销售记录不存在")
     
     update_data = sale.dict(exclude_unset=True)
-    
+
+    if 'weight_per_unit' in update_data:
+        update_data['weight_per_unit'] = _validate_optional_wpu(
+            update_data['weight_per_unit']
+        )
+
     if 'weight' in update_data or 'unit_price' in update_data:
         weight = update_data.get('weight', db_sale.weight)
         unit_price = update_data.get('unit_price', db_sale.unit_price)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Index, Integer, String, Float, Date, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
@@ -40,7 +40,17 @@ class Batch(Base):
     harvest_sales = relationship("HarvestSale", back_populates="batch")
 
 class StockingRecord(Base):
+    """投苗记录（事实表）。
+
+    计量口径见 ``app.services.metrics``：总重量只能由 尾数×每尾克重
+    派生，不接受客户端直接写入。记录更正采用追加审计 + 版本号（CAS），
+    撤销为软撤销，任何已参与周期分析的事实都不会被物理改写。
+    """
     __tablename__ = "stocking_records"
+    __table_args__ = (
+        Index("ix_stocking_records_idempotency_key", "idempotency_key", unique=True),
+        Index("ix_stocking_records_batch_status", "batch_id", "status"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     batch_id = Column(Integer, ForeignKey("batches.id"), nullable=False)
@@ -49,11 +59,53 @@ class StockingRecord(Base):
     source = Column(String(200), comment="来源")
     batch_number = Column(String(50), comment="苗种批次号")
     weight_per_unit = Column(Float, comment="单重(克/尾)")
-    total_weight = Column(Float, comment="总重量(公斤)")
+    total_weight = Column(Float, comment="总重量(公斤，由尾数与单重派生)")
     notes = Column(Text, comment="备注")
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # --- 更正/撤销/幂等/口径版本（由启动迁移在旧库上幂等补齐） ---
+    status = Column(String(20), nullable=False, server_default="active",
+                    comment="状态: active(有效), voided(已撤销)")
+    version = Column(Integer, nullable=False, server_default="1",
+                     comment="更正版本号，乐观锁")
+    idempotency_key = Column(String(100), index=False,
+                             comment="客户端幂等键，重复提交不产生第二次增量")
+    voided_at = Column(DateTime, comment="撤销时间")
+    voided_reason = Column(Text, comment="撤销原因")
+    corrected_from = Column(Text, comment="最近一次更正前的原值快照(JSON)")
+    correction_reason = Column(Text, comment="最近一次更正原因")
+    metrics_version = Column(String(30), comment="计量口径版本")
+
     batch = relationship("Batch", back_populates="stocking_records")
+    events = relationship("StockingRecordEvent", back_populates="record",
+                          order_by="StockingRecordEvent.id",
+                          cascade="all, delete-orphan")
+
+
+class StockingRecordEvent(Base):
+    """投苗记录生命周期事件（追加写，永不更新、永不删除）。
+
+    event_type: created / corrected / voided / repaired
+    所有更正与撤销在此保留原值、新值、原因、操作人与口径版本，
+    使投苗事实的任何变更都可审计、可重放。
+    """
+    __tablename__ = "stocking_record_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_id = Column(Integer, ForeignKey("stocking_records.id"),
+                       nullable=False, index=True)
+    event_type = Column(String(20), nullable=False,
+                        comment="事件类型: created, corrected, voided, repaired")
+    event_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    operator = Column(String(100), comment="操作人")
+    reason = Column(Text, comment="更正/撤销/修复原因")
+    previous_value = Column(Text, comment="变更前值(JSON 快照)")
+    new_value = Column(Text, comment="变更后值(JSON 快照)")
+    from_version = Column(Integer, comment="变更前版本号")
+    to_version = Column(Integer, comment="变更后版本号")
+    metrics_version = Column(String(30), comment="计量口径版本")
+
+    record = relationship("StockingRecord", back_populates="events")
 
 class FeedingRecord(Base):
     __tablename__ = "feeding_records"
@@ -132,6 +184,7 @@ class HarvestSale(Base):
     batch_id = Column(Integer, ForeignKey("batches.id"), nullable=False)
     sale_date = Column(Date, nullable=False, comment="销售日期")
     weight = Column(Float, nullable=False, comment="重量(公斤)")
+    weight_per_unit = Column(Float, comment="出塘均重(克/尾)，用于成活率反推")
     unit_price = Column(Float, nullable=False, comment="单价(元/公斤)")
     total_amount = Column(Float, comment="总金额(元)")
     buyer = Column(String(200), comment="买家")

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
-  Pond, Batch, StockingRecord, FeedingRecord, WaterQualityRecord,
+  Pond, Batch, StockingRecord, StockingCorrection, StockingRecordEvent,
+  StockingTotals, FeedingRecord, WaterQualityRecord,
   MedicationRecord, CostRecord, HarvestSale, CultureCycleAnalysis,
   CostSummary, FeedingSummary, BatchTraceability
 } from '../types';
@@ -13,6 +14,22 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+export function extractApiError(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail.length > 0) {
+      return detail.map((d: { msg?: string; message?: string }) =>
+        d?.msg || d?.message || '参数有误').join('；');
+    }
+    if (detail && typeof detail === 'object' && detail.message) {
+      return String(detail.message);
+    }
+    return error.response?.statusText || '请求失败';
+  }
+  return '网络异常，请稍后重试';
+}
 
 export const pondApi = {
   getAll: () => api.get<Pond[]>('/ponds/'),
@@ -36,17 +53,40 @@ export const batchApi = {
   delete: (id: number) => api.delete(`/batches/${id}/`),
 };
 
+/** 投苗录入载荷：不含 total_weight（服务端派生），也不含状态/版本字段。 */
+export type StockingRecordPayload = {
+  batch_id: number;
+  species: string;
+  quantity: number;
+  weight_per_unit: number;
+  source?: string;
+  batch_number?: string;
+  notes?: string;
+};
+
 export const stockingRecordApi = {
-  getAll: (batchId?: number) => 
-    api.get<StockingRecord[]>('/stocking-records/', { 
-      params: batchId ? { batch_id: batchId } : {} 
+  getAll: (batchId?: number, includeVoided = false) =>
+    api.get<StockingRecord[]>('/stocking-records/', {
+      params: {
+        batch_id: batchId,
+        ...(includeVoided ? { include_voided: true } : {}),
+      },
     }),
   getById: (id: number) => api.get<StockingRecord>(`/stocking-records/${id}/`),
-  create: (data: Omit<StockingRecord, 'id' | 'created_at'>) => 
-    api.post<StockingRecord>('/stocking-records/', data),
-  update: (id: number, data: Partial<StockingRecord>) => 
+  getTotals: (batchId: number) =>
+    api.get<StockingTotals>(`/stocking-records/totals/${batchId}/`),
+  getEvents: (id: number) =>
+    api.get<StockingRecordEvent[]>(`/stocking-records/${id}/events/`),
+  create: (data: StockingRecordPayload, idempotencyKey: string) =>
+    api.post<StockingRecord>('/stocking-records/', data, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+    }),
+  /** 更正：必须携带 expected_version 与 reason，409 表示版本冲突。 */
+  correct: (id: number, data: StockingCorrection) =>
     api.put<StockingRecord>(`/stocking-records/${id}/`, data),
-  delete: (id: number) => api.delete(`/stocking-records/${id}/`),
+  /** 软撤销：保留原值与原因。 */
+  void: (id: number, reason: string) =>
+    api.post<StockingRecord>(`/stocking-records/${id}/void/`, { reason }),
 };
 
 export const feedingRecordApi = {

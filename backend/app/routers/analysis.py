@@ -3,14 +3,46 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from datetime import date
+from decimal import Decimal, localcontext
 from ..database import get_db
 from ..models import Batch, Pond, StockingRecord, FeedingRecord, CostRecord, HarvestSale, WaterQualityRecord, MedicationRecord
 from ..schemas import CultureCycleAnalysis, BatchTraceability, BatchInfo, PondInfo
+from ..services import stocking as stocking_svc
+from ..services.metrics import (
+    GRAMS_PER_KILOGRAM, METRICS_VERSION, MetricsError,
+    estimate_survival_count, round_half_up,
+)
 
 router = APIRouter(
     prefix="/api/analysis",
     tags=["养殖周期分析"]
 )
+
+
+def _harvest_weight_per_unit(db: Session, batch_id: int):
+    """按各次出塘重量加权得出塘均重（克/尾）。
+
+    只有登记了 weight_per_unit 的出塘记录参与加权；若全部缺失则返回
+    None —— 此时成活率不可计算，绝不再用固定假设值反推。
+    """
+    rows = db.query(HarvestSale.weight, HarvestSale.weight_per_unit).filter(
+        HarvestSale.batch_id == batch_id,
+        HarvestSale.weight_per_unit.isnot(None),
+    ).all()
+    total_weight = Decimal("0")
+    weighted = Decimal("0")
+    for weight_kg, wpu_g in rows:
+        w = Decimal(str(weight_kg))
+        u = Decimal(str(wpu_g))
+        if not w.is_finite() or w <= 0 or not u.is_finite() or u <= 0:
+            continue
+        weighted += w * u
+        total_weight += w
+    if total_weight <= 0:
+        return None
+    with localcontext() as ctx:
+        ctx.prec = 28
+        return float(round_half_up(weighted / total_weight, 2))
 
 @router.get("/cycle/{batch_id}/", response_model=CultureCycleAnalysis)
 def analyze_cycle(batch_id: int, db: Session = Depends(get_db)):
@@ -20,10 +52,11 @@ def analyze_cycle(batch_id: int, db: Session = Depends(get_db)):
     
     pond = db.query(Pond).filter(Pond.id == batch.pond_id).first()
     
-    initial_quantity = db.query(func.sum(StockingRecord.quantity)).filter(
-        StockingRecord.batch_id == batch.id
-    ).scalar() or 0
-    
+    # 投苗口径与列表、追溯共用同一汇总：只统计未撤销的有效投苗记录
+    stocking_totals = stocking_svc.batch_totals(db, batch.id)
+    initial_quantity = stocking_totals["quantity"]
+    initial_weight_kg = stocking_totals["total_weight_kg"]
+
     harvest_weight = db.query(func.sum(HarvestSale.weight)).filter(
         HarvestSale.batch_id == batch.id
     ).scalar() or 0
@@ -45,19 +78,37 @@ def analyze_cycle(batch_id: int, db: Session = Depends(get_db)):
     if harvest_date:
         days_cultured = (harvest_date - batch.stocking_date).days
     
-    survival_rate = 0
-    if initial_quantity > 0 and harvest_weight > 0:
-        avg_weight_per_fish = 0.5
-        estimated_survival = harvest_weight / avg_weight_per_fish
-        survival_rate = (estimated_survival / initial_quantity) * 100
+    # 成活率：仅依据出塘登记的实际均重（克/尾）反推，禁止固定假设值。
+    # 未登记出塘均重或没有有效投苗尾数时返回 null 并附说明。
+    harvest_wpu_g = _harvest_weight_per_unit(db, batch.id)
+    survival_rate = None
+    estimated_survival = None
+    survival_note = None
+    if initial_quantity <= 0:
+        survival_note = "没有有效投苗记录，无法计算成活率"
+    elif harvest_weight <= 0:
+        survival_note = "尚未登记出塘重量，成活率待出塘后计算"
+    elif harvest_wpu_g is None:
+        survival_note = "出塘记录未填写出塘均重(克/尾)，无法反推存活尾数"
+    else:
+        try:
+            estimated_survival = estimate_survival_count(
+                harvest_weight, harvest_wpu_g, initial_quantity
+            )
+            survival_rate = float(round_half_up(
+                Decimal(estimated_survival) / Decimal(initial_quantity) * 100,
+                2,
+            ))
+        except MetricsError as exc:
+            survival_note = f"成活率计算失败：{exc}"
     
-    feed_conversion_ratio = 0
+    feed_conversion_ratio = 0.0
     if harvest_weight > 0 and feed_total > 0:
-        feed_conversion_ratio = feed_total / harvest_weight
-    
-    yield_per_mu = 0
+        feed_conversion_ratio = float(round_half_up(feed_total / harvest_weight, 2))
+
+    yield_per_mu = 0.0
     if pond and pond.area > 0:
-        yield_per_mu = harvest_weight / pond.area
+        yield_per_mu = float(round_half_up(harvest_weight / pond.area, 2))
     
     profit = total_revenue - total_cost
     
@@ -113,15 +164,20 @@ def analyze_cycle(batch_id: int, db: Session = Depends(get_db)):
         harvest_date=harvest_date,
         days_cultured=days_cultured,
         initial_quantity=initial_quantity,
+        initial_weight_kg=initial_weight_kg,
         harvest_weight=harvest_weight,
-        survival_rate=round(survival_rate, 2),
+        harvest_weight_per_unit_g=harvest_wpu_g,
+        estimated_survival_count=estimated_survival,
+        survival_rate=survival_rate,
+        survival_rate_note=survival_note,
         feed_total=feed_total,
-        feed_conversion_ratio=round(feed_conversion_ratio, 2),
+        feed_conversion_ratio=feed_conversion_ratio,
         area=pond.area if pond else 0,
-        yield_per_mu=round(yield_per_mu, 2),
+        yield_per_mu=yield_per_mu,
         total_cost=total_cost,
         total_revenue=total_revenue,
         profit=profit,
+        metrics_version=METRICS_VERSION,
         cost_summary=cost_summary_dict,
         feeding_summary=feeding_summary_result
     )
@@ -136,7 +192,7 @@ def batch_traceability(batch_id: int, db: Session = Depends(get_db)):
     
     stocking_records = db.query(StockingRecord).filter(
         StockingRecord.batch_id == batch.id
-    ).all()
+    ).order_by(StockingRecord.created_at, StockingRecord.id).all()
     
     feeding_records = db.query(FeedingRecord).filter(
         FeedingRecord.batch_id == batch.id
@@ -178,7 +234,12 @@ def batch_traceability(batch_id: int, db: Session = Depends(get_db)):
                 "quantity": r.quantity,
                 "source": r.source,
                 "batch_number": r.batch_number,
-                "stocking_date": r.created_at.date() if hasattr(r, 'created_at') else None
+                "stocking_date": r.created_at.date() if hasattr(r, 'created_at') and r.created_at else None,
+                "weight_per_unit": r.weight_per_unit,
+                "total_weight_kg": r.total_weight,
+                "status": r.status or "active",
+                "version": r.version or 1,
+                "metrics_version": r.metrics_version,
             } for r in stocking_records
         ],
         feeding_records=[

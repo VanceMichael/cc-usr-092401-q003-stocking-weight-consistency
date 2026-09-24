@@ -30,9 +30,49 @@ export interface StockingRecord {
   source?: string;
   batch_number?: string;
   weight_per_unit?: number;
+  /** 总重量（公斤），永远由后端按尾数×每尾克重派生，前端只读 */
   total_weight?: number;
   notes?: string;
   created_at: string;
+  status: 'active' | 'voided' | string;
+  version: number;
+  voided_at?: string;
+  voided_reason?: string;
+  correction_reason?: string;
+  metrics_version?: string;
+}
+
+export interface StockingRecordEvent {
+  id: number;
+  record_id: number;
+  event_type: 'created' | 'corrected' | 'voided' | 'repaired' | string;
+  event_at: string;
+  operator?: string;
+  reason?: string;
+  previous_value?: Record<string, unknown> | null;
+  new_value?: Record<string, unknown> | null;
+  from_version?: number;
+  to_version?: number;
+  metrics_version?: string;
+}
+
+export interface StockingTotals {
+  quantity: number;
+  total_weight_kg: number;
+  records_missing_weight: number;
+  metrics_version: string;
+}
+
+/** 投苗更正请求：必须带版本号与原因。 */
+export interface StockingCorrection {
+  quantity?: number;
+  species?: string;
+  weight_per_unit?: number;
+  source?: string;
+  batch_number?: string;
+  notes?: string;
+  expected_version: number;
+  reason: string;
 }
 
 export interface FeedingRecord {
@@ -98,6 +138,8 @@ export interface HarvestSale {
   batch_id: number;
   sale_date: string;
   weight: number;
+  /** 出塘均重（克/尾），用于按真实口径反推存活尾数/成活率 */
+  weight_per_unit?: number;
   unit_price: number;
   total_amount?: number;
   buyer?: string;
@@ -130,8 +172,12 @@ export interface CultureCycleAnalysis {
   harvest_date?: string;
   days_cultured?: number;
   initial_quantity: number;
+  initial_weight_kg?: number;
   harvest_weight: number;
-  survival_rate: number;
+  harvest_weight_per_unit_g?: number | null;
+  estimated_survival_count?: number | null;
+  survival_rate: number | null;
+  survival_rate_note?: string | null;
   feed_total: number;
   feed_conversion_ratio: number;
   area: number;
@@ -139,6 +185,7 @@ export interface CultureCycleAnalysis {
   total_cost: number;
   total_revenue: number;
   profit: number;
+  metrics_version?: string;
   cost_summary?: CostSummary;
   feeding_summary?: FeedingSummary;
 }
@@ -154,6 +201,11 @@ export interface StockingRecordTrace {
   source?: string;
   batch_number?: string;
   stocking_date?: string;
+  weight_per_unit?: number;
+  total_weight_kg?: number;
+  status: string;
+  version: number;
+  metrics_version?: string;
 }
 
 export interface FeedingRecordTrace {

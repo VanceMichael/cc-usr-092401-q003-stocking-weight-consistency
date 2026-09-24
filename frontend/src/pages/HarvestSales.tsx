@@ -13,6 +13,7 @@ const HarvestSales: React.FC = () => {
     batch_id: '',
     sale_date: '',
     weight: '',
+    weight_per_unit: '',
     unit_price: '',
     total_amount: '',
     buyer: '',
@@ -47,6 +48,7 @@ const HarvestSales: React.FC = () => {
         ...formData,
         batch_id: parseInt(formData.batch_id),
         weight: parseFloat(formData.weight),
+        weight_per_unit: formData.weight_per_unit ? parseFloat(formData.weight_per_unit) : undefined,
         unit_price: parseFloat(formData.unit_price),
         total_amount: formData.total_amount ? parseFloat(formData.total_amount) : undefined
       };
@@ -63,6 +65,7 @@ const HarvestSales: React.FC = () => {
         batch_id: '',
         sale_date: '',
         weight: '',
+        weight_per_unit: '',
         unit_price: '',
         total_amount: '',
         buyer: '',
@@ -82,6 +85,7 @@ const HarvestSales: React.FC = () => {
       batch_id: record.batch_id.toString(),
       sale_date: record.sale_date,
       weight: record.weight.toString(),
+      weight_per_unit: record.weight_per_unit?.toString() || '',
       unit_price: record.unit_price.toString(),
       total_amount: record.total_amount?.toString() || '',
       buyer: record.buyer || '',
@@ -138,6 +142,7 @@ const HarvestSales: React.FC = () => {
               batch_id: '',
               sale_date: '',
               weight: '',
+              weight_per_unit: '',
               unit_price: '',
               total_amount: '',
               buyer: '',
@@ -198,6 +203,7 @@ const HarvestSales: React.FC = () => {
                 <th>养殖批次</th>
                 <th>销售日期</th>
                 <th>重量(公斤)</th>
+                <th>出塘均重(克/尾)</th>
                 <th>单价(元/公斤)</th>
                 <th>总金额(元)</th>
                 <th>买家</th>
@@ -212,6 +218,7 @@ const HarvestSales: React.FC = () => {
                   <td className="font-medium text-ocean-700">{getBatchNumber(record.batch_id)}</td>
                   <td>{record.sale_date}</td>
                   <td>{record.weight.toLocaleString()}</td>
+                  <td>{record.weight_per_unit ?? '—'}</td>
                   <td>¥{record.unit_price}</td>
                   <td className="font-medium text-green-600">¥{(record.total_amount || 0).toLocaleString()}</td>
                   <td>{record.buyer || '-'}</td>
@@ -242,7 +249,7 @@ const HarvestSales: React.FC = () => {
               ))}
               {records.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-center py-8 text-gray-500">
+                  <td colSpan={10} className="text-center py-8 text-gray-500">
                     暂无出塘销售记录
                   </td>
                 </tr>
@@ -309,7 +316,8 @@ const HarvestSales: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="0.001"
+                    min={0.001}
                     required
                     value={formData.weight}
                     onChange={(e) => {
@@ -323,6 +331,24 @@ const HarvestSales: React.FC = () => {
                     }}
                     className="input-field"
                     placeholder="重量"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    出塘均重(克/尾) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0.01}
+                    max={20000}
+                    required
+                    value={formData.weight_per_unit}
+                    onChange={(e) => setFormData({ ...formData, weight_per_unit: e.target.value })}
+                    className="input-field"
+                    placeholder="用于成活率反推"
+                    title="出塘时抽样平均每尾重量（克/尾）；成活率分析按此实际口径反推存活尾数"
                   />
                 </div>
 
@@ -348,7 +374,9 @@ const HarvestSales: React.FC = () => {
                     placeholder="单价"
                   />
                 </div>
+              </div>
 
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     总金额(元)
@@ -362,6 +390,10 @@ const HarvestSales: React.FC = () => {
                     placeholder="自动计算"
                     readOnly
                   />
+                </div>
+                <div className="flex items-end pb-2 text-xs text-gray-400">
+                  成活率 = 出塘重量 ÷ 出塘均重 反推存活尾数 ÷ 投苗尾数；
+                  未填出塘均重时不臆造成活率。
                 </div>
               </div>
 

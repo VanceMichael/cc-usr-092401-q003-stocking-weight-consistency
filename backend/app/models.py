@@ -48,12 +48,46 @@ class StockingRecord(Base):
     quantity = Column(Integer, nullable=False, comment="数量(尾)")
     source = Column(String(200), comment="来源")
     batch_number = Column(String(50), comment="苗种批次号")
-    weight_per_unit = Column(Float, comment="单重(克/尾)")
-    total_weight = Column(Float, comment="总重量(公斤)")
+    weight_per_unit = Column(Float, comment="单重(克/尾), 精度0.01克")
+    total_weight = Column(Float, comment="总重量(公斤), 由明细派生, 精度0.001公斤")
     notes = Column(Text, comment="备注")
+
+    # ---- 计量口径与版本化（投苗计量口径修复）----
+    status = Column(String(20), nullable=False, default="active",
+                    comment="状态: active(有效), superseded(已被更正替代), void(已撤销)")
+    record_type = Column(String(20), nullable=False, default="initial",
+                         comment="记录类型: initial(首次投苗), supplement(分批补苗)")
+    revision = Column(Integer, nullable=False, default=1, comment="版本号, 从1开始")
+    supersedes_id = Column(Integer, ForeignKey("stocking_records.id"),
+                           comment="更正时指向被替代的上一版本记录")
+    root_id = Column(Integer, ForeignKey("stocking_records.id"),
+                     comment="逻辑投苗事实的首版本id, 同一事实各版本共享")
+    client_token = Column(String(64), unique=True, index=True,
+                          comment="客户端幂等令牌, 防重复提交")
+    void_reason = Column(Text, comment="撤销原因")
+    correct_reason = Column(Text, comment="更正原因")
+    policy_version = Column(String(64), comment="落库时使用的计量口径版本")
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     batch = relationship("Batch", back_populates="stocking_records")
+
+
+class StockingRecordRevision(Base):
+    """投苗事实修订留痕：创建/更正/撤销均追加一行，永不修改、永不删除。"""
+    __tablename__ = "stocking_record_revisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    root_record_id = Column(Integer, nullable=False, index=True,
+                            comment="逻辑投苗事实首版本id")
+    sequence = Column(Integer, nullable=False, comment="事实内递增序号, 从1开始")
+    action = Column(String(20), nullable=False,
+                    comment="动作: create, correct, void, repair")
+    record_id = Column(Integer, nullable=False, comment="该动作产出的版本记录id(撤销时为被撤销记录id)")
+    before_data = Column(Text, comment="变更前完整快照(JSON), create 时为 null")
+    after_data = Column(Text, comment="变更后完整快照(JSON)")
+    reason = Column(Text, comment="更正/撤销/修复原因")
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class FeedingRecord(Base):
     __tablename__ = "feeding_records"

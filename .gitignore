@@ -17,5 +17,9 @@ Thumbs.db
 *.log
 logs/
 
+# Python
+__pycache__/
+*.pyc
+
 # Docker
 *.pid

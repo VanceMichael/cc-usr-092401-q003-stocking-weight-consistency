@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, List, Literal
 from datetime import date, datetime
 
 class PondBase(BaseModel):
@@ -58,6 +58,47 @@ class BatchResponse(BatchBase):
 
 class StockingRecordBase(BaseModel):
     batch_id: int
+    species: str = Field(..., min_length=1)
+    quantity: int
+    source: Optional[str] = None
+    batch_number: Optional[str] = None
+    weight_per_unit: Optional[float] = None
+    total_weight: Optional[float] = None
+    notes: Optional[str] = None
+    record_type: Literal["initial", "supplement"] = "initial"
+
+
+class StockingRecordCreate(StockingRecordBase):
+    # 客户端生成的幂等令牌（建议 UUID）。重复提交返回同一记录，不会产生两次增量。
+    client_token: Optional[str] = Field(default=None, max_length=64)
+
+
+class StockingRecordCorrect(BaseModel):
+    """更正投苗事实：以完整新值替代旧版本，旧版本留痕并标记 superseded。"""
+    batch_id: int
+    species: str = Field(..., min_length=1)
+    quantity: int
+    source: Optional[str] = None
+    batch_number: Optional[str] = None
+    weight_per_unit: Optional[float] = None
+    total_weight: Optional[float] = None
+    notes: Optional[str] = None
+    record_type: Literal["initial", "supplement"] = "initial"
+    reason: str = Field(..., min_length=1, description="更正原因（必填，随旧值一并留痕）")
+    expected_revision: Optional[int] = Field(
+        default=None, description="乐观锁：认为当前有效版本号；与库内不一致则 409"
+    )
+
+
+class StockingRecordVoid(BaseModel):
+    reason: str = Field(..., min_length=1, description="撤销原因（必填，原值保留留痕）")
+
+
+class StockingRecordResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
     species: str
     quantity: int
     source: Optional[str] = None
@@ -65,26 +106,30 @@ class StockingRecordBase(BaseModel):
     weight_per_unit: Optional[float] = None
     total_weight: Optional[float] = None
     notes: Optional[str] = None
-
-class StockingRecordCreate(StockingRecordBase):
-    pass
-
-class StockingRecordUpdate(BaseModel):
-    batch_id: Optional[int] = None
-    species: Optional[str] = None
-    quantity: Optional[int] = None
-    source: Optional[str] = None
-    batch_number: Optional[str] = None
-    weight_per_unit: Optional[float] = None
-    total_weight: Optional[float] = None
-    notes: Optional[str] = None
-
-class StockingRecordResponse(StockingRecordBase):
-    id: int
+    record_type: str = "initial"
+    status: str = "active"
+    revision: int = 1
+    supersedes_id: Optional[int] = None
+    root_id: Optional[int] = None
+    void_reason: Optional[str] = None
+    correct_reason: Optional[str] = None
+    policy_version: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+
+class StockingRecordRevisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    root_record_id: int
+    sequence: int
+    action: str
+    record_id: int
+    before_data: Optional[str] = None
+    after_data: Optional[str] = None
+    reason: Optional[str] = None
+    created_at: datetime
 
 class FeedingRecordBase(BaseModel):
     batch_id: int
@@ -267,8 +312,13 @@ class CultureCycleAnalysis(BaseModel):
     harvest_date: Optional[date] = None
     days_cultured: Optional[int] = None
     initial_quantity: int
+    initial_weight: float = 0
+    avg_weight_per_unit: Optional[float] = None
     harvest_weight: float
-    survival_rate: float
+    survival_quantity: Optional[int] = None
+    survival_rate: Optional[float] = None
+    survival_estimable: bool = False
+    survival_note: Optional[str] = None
     feed_total: float
     feed_conversion_ratio: float
     area: float
@@ -276,14 +326,21 @@ class CultureCycleAnalysis(BaseModel):
     total_cost: float
     total_revenue: float
     profit: float
+    policy_version: Optional[str] = None
     cost_summary: Optional[dict] = None
     feeding_summary: Optional[dict] = None
 
 class StockingRecordTrace(BaseModel):
+    id: Optional[int] = None
     species: str
     quantity: int
+    weight_per_unit: Optional[float] = None
+    total_weight: Optional[float] = None
     source: Optional[str] = None
     batch_number: Optional[str] = None
+    record_type: Optional[str] = None
+    status: Optional[str] = None
+    revision: Optional[int] = None
     stocking_date: Optional[date] = None
 
 class FeedingRecordTrace(BaseModel):

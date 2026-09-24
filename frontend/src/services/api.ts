@@ -2,7 +2,9 @@ import axios from 'axios';
 import type {
   Pond, Batch, StockingRecord, FeedingRecord, WaterQualityRecord,
   MedicationRecord, CostRecord, HarvestSale, CultureCycleAnalysis,
-  CostSummary, FeedingSummary, BatchTraceability
+  CostSummary, FeedingSummary, BatchTraceability,
+  StockingRecordCreateInput, StockingRecordCorrectInput, StockingRecordRevision,
+  StockingPolicy, StockingDiagnosticsReport,
 } from '../types';
 
 const API_BASE_URL = '/api';
@@ -37,16 +39,26 @@ export const batchApi = {
 };
 
 export const stockingRecordApi = {
-  getAll: (batchId?: number) => 
-    api.get<StockingRecord[]>('/stocking-records/', { 
-      params: batchId ? { batch_id: batchId } : {} 
+  getAll: (batchId?: number, includeHistory = false) =>
+    api.get<StockingRecord[]>('/stocking-records/', {
+      params: { batch_id: batchId || undefined, include_history: includeHistory || undefined }
     }),
   getById: (id: number) => api.get<StockingRecord>(`/stocking-records/${id}/`),
-  create: (data: Omit<StockingRecord, 'id' | 'created_at'>) => 
+  create: (data: StockingRecordCreateInput) =>
     api.post<StockingRecord>('/stocking-records/', data),
-  update: (id: number, data: Partial<StockingRecord>) => 
-    api.put<StockingRecord>(`/stocking-records/${id}/`, data),
-  delete: (id: number) => api.delete(`/stocking-records/${id}/`),
+  /** 更正：旧版本留痕，返回新版本 */
+  correct: (id: number, data: StockingRecordCorrectInput) =>
+    api.post<StockingRecord>(`/stocking-records/${id}/correct/`, data),
+  /** 撤销（软删）：原值与原因留痕 */
+  void: (id: number, reason: string) =>
+    api.post<StockingRecord>(`/stocking-records/${id}/void/`, { reason }),
+  revisions: (id: number) =>
+    api.get<StockingRecordRevision[]>(`/stocking-records/${id}/revisions/`),
+  policy: () => api.get<StockingPolicy>('/stocking-records/policy/'),
+  diagnostics: () =>
+    api.get<StockingDiagnosticsReport>('/stocking-records/diagnostics/'),
+  repair: () =>
+    api.post<StockingDiagnosticsReport>('/stocking-records/diagnostics/repair/'),
 };
 
 export const feedingRecordApi = {

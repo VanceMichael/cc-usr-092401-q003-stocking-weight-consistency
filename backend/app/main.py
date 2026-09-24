@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
+from .migrations_stocking import run_migrations
 from .routers import ponds, batches, stocking, feeding, water_quality, medication, costs, harvest, analysis
 
-Base.metadata.create_all(bind=engine)
+# 建表并幂等执行投苗计量口径迁移（加列、回填、留痕、唯一索引）
+run_migrations()
 
 app = FastAPI(
     title="水产养殖管理系统",

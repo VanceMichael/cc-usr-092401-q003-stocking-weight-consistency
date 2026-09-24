@@ -178,15 +178,23 @@ const Analysis: React.FC = () => {
                       <thead>
                         <tr>
                           <th>投苗日期</th>
-                          <th>数量</th>
+                          <th>类型</th>
+                          <th>数量(尾)</th>
+                          <th>单重(克/尾)</th>
+                          <th>总重(公斤)</th>
+                          <th>版本</th>
                           <th>来源</th>
                         </tr>
                       </thead>
                       <tbody>
                         {searchResult.stocking_records.map((record, idx) => (
-                          <tr key={idx}>
+                          <tr key={record.id ?? idx}>
                             <td>{record.stocking_date}</td>
-                            <td>{record.quantity} 尾</td>
+                            <td>{record.record_type === 'supplement' ? '分批补苗' : '首次投苗'}</td>
+                            <td>{record.quantity.toLocaleString()} 尾</td>
+                            <td>{record.weight_per_unit != null ? record.weight_per_unit.toFixed(2) : '-'}</td>
+                            <td>{record.total_weight != null ? record.total_weight.toFixed(3) : '-'}</td>
+                            <td>v{record.revision ?? 1}</td>
                             <td>{record.source || '-'}</td>
                           </tr>
                         ))}
@@ -395,6 +403,11 @@ const Analysis: React.FC = () => {
               <div className="card">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">
                   养殖周期分析 - {getBatchNumber(selectedBatchId)}
+                  {analysisData.policy_version && (
+                    <span className="ml-2 text-xs font-normal text-gray-400">
+                      口径 {analysisData.policy_version}
+                    </span>
+                  )}
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 bg-green-50 rounded-lg">
@@ -403,8 +416,16 @@ const Analysis: React.FC = () => {
                       <div>
                         <p className="text-sm text-green-600">成活率</p>
                         <p className="text-2xl font-bold text-green-700">
-                          {analysisData.survival_rate ? `${analysisData.survival_rate.toFixed(1)}%` : '-'}
+                          {analysisData.survival_rate != null
+                            ? `${analysisData.survival_rate.toFixed(1)}%`
+                            : '暂不可算'}
                         </p>
+                        {analysisData.survival_quantity != null && (
+                          <p className="text-xs text-green-600 mt-1">
+                            估算存活 {analysisData.survival_quantity.toLocaleString()} 尾 /
+                            投苗 {analysisData.initial_quantity.toLocaleString()} 尾
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -433,6 +454,37 @@ const Analysis: React.FC = () => {
                     </div>
                   </div>
                 </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-gray-500">投苗总重量（有效版本合计）</p>
+                    <p className="font-semibold">{analysisData.initial_weight.toFixed(3)} 公斤</p>
+                  </div>
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-gray-500">投苗加权平均单重</p>
+                    <p className="font-semibold">
+                      {analysisData.avg_weight_per_unit != null
+                        ? `${analysisData.avg_weight_per_unit.toFixed(2)} 克/尾`
+                        : '缺单重，无法反推'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-gray-500">出塘总重量</p>
+                    <p className="font-semibold">{analysisData.harvest_weight.toLocaleString()} 公斤</p>
+                  </div>
+                </div>
+
+                {analysisData.survival_note && (
+                  <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+                    {analysisData.survival_note}
+                  </div>
+                )}
+                {analysisData.survival_estimable && (
+                  <p className="mt-2 text-xs text-gray-400">
+                    成活率 = 出塘重量 ÷ 投苗加权平均单重反推存活尾数 ÷ 投苗总尾数；
+                    不再使用固定 0.5 公斤/尾假设。
+                  </p>
+                )}
               </div>
 
               {analysisData.cost_summary && (
